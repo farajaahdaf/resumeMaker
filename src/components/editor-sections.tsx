@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, Plus, Trash2 } from "lucide-react";
 import type { Resume } from "@/domain/resume";
 import { createId } from "@/domain/resume";
@@ -18,21 +18,77 @@ export function ProfileEditor({ resume, onChange }: Pick<Props, "resume" | "onCh
 
 export function ContentEditor({ resume, onChange, onImprove }: Props) {
   const [step, setStep] = useState(0);
+  const [enteringIds, setEnteringIds] = useState<Set<string>>(() => new Set());
+  const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
+  const resumeRef = useRef(resume);
+  const onChangeRef = useRef(onChange);
+  const motionTimers = useRef(new Map<string, number>());
+  const pendingRemovalUpdates = useRef(new Map<string, (current: Resume) => Resume>());
+
+  useEffect(() => { resumeRef.current = resume; }, [resume]);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+
+  useEffect(() => () => {
+    motionTimers.current.forEach((timer) => window.clearTimeout(timer));
+    motionTimers.current.clear();
+    pendingRemovalUpdates.current.forEach((update) => {
+      const next = update(resumeRef.current);
+      resumeRef.current = next;
+      onChangeRef.current(next);
+    });
+    pendingRemovalUpdates.current.clear();
+  }, []);
+
+  const clearMotionTimer = (key: string) => {
+    const timer = motionTimers.current.get(key);
+    if (timer) window.clearTimeout(timer);
+    motionTimers.current.delete(key);
+  };
+  const commitResume = (update: (current: Resume) => Resume) => {
+    const next = update(resumeRef.current);
+    resumeRef.current = next;
+    onChange(next);
+  };
+  const addWithMotion = (id: string, update: (current: Resume) => Resume) => {
+    setEnteringIds((current) => new Set(current).add(id));
+    commitResume(update);
+    const key = `enter:${id}`;
+    clearMotionTimer(key);
+    motionTimers.current.set(key, window.setTimeout(() => {
+      setEnteringIds((current) => { const next = new Set(current); next.delete(id); return next; });
+      motionTimers.current.delete(key);
+    }, 240));
+  };
+  const removeWithMotion = (id: string, update: (current: Resume) => Resume) => {
+    if (leavingIds.has(id)) return;
+    clearMotionTimer(`enter:${id}`);
+    setEnteringIds((current) => { const next = new Set(current); next.delete(id); return next; });
+    setLeavingIds((current) => new Set(current).add(id));
+    const key = `exit:${id}`;
+    pendingRemovalUpdates.current.set(key, update);
+    motionTimers.current.set(key, window.setTimeout(() => {
+      commitResume(update);
+      setLeavingIds((current) => { const next = new Set(current); next.delete(id); return next; });
+      motionTimers.current.delete(key);
+      pendingRemovalUpdates.current.delete(key);
+    }, 180));
+  };
+  const motionClass = (id: string, base: string) => `${base} motion-list-item${enteringIds.has(id) ? " is-entering" : ""}${leavingIds.has(id) ? " is-leaving" : ""}`;
   const steps = [
     { title: "Ringkasan", done: resume.summary.trim(), view: <div className="field-with-action"><TextArea label="Ringkasan profesional" value={resume.summary} rows={6} onChange={(value) => onChange({ ...resume, summary: value })} /><button type="button" className="text-button" onClick={() => onImprove("summary")}>Minta saran AI</button></div> },
     { title: "Keahlian", done: resume.skills.trim(), view: <div className="field-with-action"><TextArea label="Keahlian" helper="Pisahkan dengan koma; hanya masukkan keahlian yang benar-benar dimiliki." value={resume.skills} rows={4} onChange={(value) => onChange({ ...resume, skills: value })} /><button type="button" className="text-button" onClick={() => onImprove("skills")}>Minta saran AI</button></div> },
-    { title: "Pengalaman", done: resume.experiences.some((item) => item.bullets.some((bullet) => bullet.text.trim())), view: <div className="editor-stack"><EntryHeader title="Pengalaman kerja" action="Tambah pengalaman" onAdd={() => onChange({ ...resume, experiences: [...resume.experiences, { id: createId(), role: "", company: "", location: "", startDate: "", endDate: "", bullets: [{ id: createId(), text: "" }] }] })} />
-    {resume.experiences.map((item, index) => <div className="entry-card" key={item.id}>
-      <div className="entry-card-head"><span>Pengalaman {index + 1}</span><IconButton label="Hapus pengalaman" onClick={() => onChange({ ...resume, experiences: resume.experiences.filter((entry) => entry.id !== item.id) })} /></div>
+    { title: "Pengalaman", done: resume.experiences.some((item) => item.bullets.some((bullet) => bullet.text.trim())), view: <div className="editor-stack"><EntryHeader title="Pengalaman kerja" action="Tambah pengalaman" onAdd={() => { const id = createId(); addWithMotion(id, (current) => ({ ...current, experiences: [...current.experiences, { id, role: "", company: "", location: "", startDate: "", endDate: "", bullets: [{ id: createId(), text: "" }] }] })); }} />
+    {resume.experiences.map((item, index) => <div className={motionClass(item.id, "entry-card")} key={item.id}>
+      <div className="entry-card-head"><span>Pengalaman {index + 1}</span><IconButton label="Hapus pengalaman" onClick={() => removeWithMotion(item.id, (current) => ({ ...current, experiences: current.experiences.filter((entry) => entry.id !== item.id) }))} /></div>
       <div className="field-grid"><Field label="Jabatan" value={item.role} onChange={(value) => updateExperience(resume, onChange, item.id, { role: value })} /><Field label="Perusahaan" value={item.company} onChange={(value) => updateExperience(resume, onChange, item.id, { company: value })} /><Field label="Lokasi" value={item.location} onChange={(value) => updateExperience(resume, onChange, item.id, { location: value })} /><div className="date-grid"><Field label="Mulai" value={item.startDate} placeholder="Jan 2024" onChange={(value) => updateExperience(resume, onChange, item.id, { startDate: value })} /><Field label="Selesai" value={item.endDate} placeholder="Sekarang" onChange={(value) => updateExperience(resume, onChange, item.id, { endDate: value })} /></div></div>
-      <div className="bullet-list">{item.bullets.map((bullet, bulletIndex) => <div className="bullet-editor" key={bullet.id}><TextArea label={`Bullet ${bulletIndex + 1}`} value={bullet.text} rows={3} onChange={(value) => updateExperience(resume, onChange, item.id, { bullets: item.bullets.map((entry) => entry.id === bullet.id ? { ...entry, text: value } : entry) })} /><button type="button" className="text-button" onClick={() => onImprove(bullet.id)}>Perbaiki dengan AI</button><IconButton label="Hapus bullet" onClick={() => updateExperience(resume, onChange, item.id, { bullets: item.bullets.filter((entry) => entry.id !== bullet.id) })} /></div>)}</div>
-      <button type="button" className="secondary-button compact" onClick={() => updateExperience(resume, onChange, item.id, { bullets: [...item.bullets, { id: createId(), text: "" }] })}><Plus size={16} /> Tambah bullet</button>
+      <div className="bullet-list">{item.bullets.map((bullet, bulletIndex) => <div className={motionClass(bullet.id, "bullet-editor")} key={bullet.id}><TextArea label={`Bullet ${bulletIndex + 1}`} value={bullet.text} rows={3} onChange={(value) => updateExperience(resume, onChange, item.id, { bullets: item.bullets.map((entry) => entry.id === bullet.id ? { ...entry, text: value } : entry) })} /><button type="button" className="text-button" onClick={() => onImprove(bullet.id)}>Perbaiki dengan AI</button><IconButton label="Hapus bullet" onClick={() => removeWithMotion(bullet.id, (current) => ({ ...current, experiences: current.experiences.map((experience) => experience.id === item.id ? { ...experience, bullets: experience.bullets.filter((entry) => entry.id !== bullet.id) } : experience) }))} /></div>)}</div>
+      <button type="button" className="secondary-button compact" onClick={() => { const id = createId(); addWithMotion(id, (current) => ({ ...current, experiences: current.experiences.map((experience) => experience.id === item.id ? { ...experience, bullets: [...experience.bullets, { id, text: "" }] } : experience) })); }}><Plus size={16} /> Tambah bullet</button>
     </div>)}</div> },
-    { title: "Pendidikan", done: resume.education.some((item) => item.degree.trim() || item.institution.trim()), view: <div className="editor-stack"><EntryHeader title="Pendidikan" action="Tambah pendidikan" onAdd={() => onChange({ ...resume, education: [...resume.education, { id: createId(), degree: "", institution: "", location: "", graduationDate: "" }] })} />
-    {resume.education.map((item, index) => <div className="entry-card" key={item.id}><div className="entry-card-head"><span>Pendidikan {index + 1}</span><IconButton label="Hapus pendidikan" onClick={() => onChange({ ...resume, education: resume.education.filter((entry) => entry.id !== item.id) })} /></div><div className="field-grid"><Field label="Gelar / jurusan" value={item.degree} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, degree: value } : entry) })} /><Field label="Institusi" value={item.institution} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, institution: value } : entry) })} /><Field label="Lokasi" value={item.location} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, location: value } : entry) })} /><Field label="Lulus" value={item.graduationDate} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, graduationDate: value } : entry) })} /></div></div>)}
+    { title: "Pendidikan", done: resume.education.some((item) => item.degree.trim() || item.institution.trim()), view: <div className="editor-stack"><EntryHeader title="Pendidikan" action="Tambah pendidikan" onAdd={() => { const id = createId(); addWithMotion(id, (current) => ({ ...current, education: [...current.education, { id, degree: "", institution: "", location: "", graduationDate: "" }] })); }} />
+    {resume.education.map((item, index) => <div className={motionClass(item.id, "entry-card")} key={item.id}><div className="entry-card-head"><span>Pendidikan {index + 1}</span><IconButton label="Hapus pendidikan" onClick={() => removeWithMotion(item.id, (current) => ({ ...current, education: current.education.filter((entry) => entry.id !== item.id) }))} /></div><div className="field-grid"><Field label="Gelar / jurusan" value={item.degree} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, degree: value } : entry) })} /><Field label="Institusi" value={item.institution} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, institution: value } : entry) })} /><Field label="Lokasi" value={item.location} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, location: value } : entry) })} /><Field label="Lulus" value={item.graduationDate} onChange={(value) => onChange({ ...resume, education: resume.education.map((entry) => entry.id === item.id ? { ...entry, graduationDate: value } : entry) })} /></div></div>)}
     </div> },
-    { title: "Proyek", done: resume.projects.some((item) => item.name.trim() || item.bullets.some((bullet) => bullet.text.trim())), view: <div className="editor-stack"><EntryHeader title="Proyek" action="Tambah proyek" onAdd={() => onChange({ ...resume, projects: [...resume.projects, { id: createId(), name: "", technologies: "", date: "", bullets: [{ id: createId(), text: "" }] }] })} />
-    {resume.projects.map((item, index) => <div className="entry-card" key={item.id}><div className="entry-card-head"><span>Proyek {index + 1}</span><IconButton label="Hapus proyek" onClick={() => onChange({ ...resume, projects: resume.projects.filter((entry) => entry.id !== item.id) })} /></div><div className="field-grid"><Field label="Nama proyek" value={item.name} onChange={(value) => updateProject(resume, onChange, item.id, { name: value })} /><Field label="Teknologi" value={item.technologies} onChange={(value) => updateProject(resume, onChange, item.id, { technologies: value })} /><Field label="Tanggal proyek" value={item.date} onChange={(value) => updateProject(resume, onChange, item.id, { date: value })} /></div><div className="bullet-list">{item.bullets.map((bullet, bulletIndex) => <div className="bullet-editor" key={bullet.id}><TextArea label={`Bullet proyek ${bulletIndex + 1}`} value={bullet.text} rows={3} onChange={(value) => updateProject(resume, onChange, item.id, { bullets: item.bullets.map((entry) => entry.id === bullet.id ? { ...entry, text: value } : entry) })} /><button type="button" className="text-button" onClick={() => onImprove(bullet.id)}>Perbaiki dengan AI</button><IconButton label="Hapus bullet proyek" onClick={() => updateProject(resume, onChange, item.id, { bullets: item.bullets.filter((entry) => entry.id !== bullet.id) })} /></div>)}</div><button type="button" className="secondary-button compact" onClick={() => updateProject(resume, onChange, item.id, { bullets: [...item.bullets, { id: createId(), text: "" }] })}><Plus size={16} /> Tambah bullet</button></div>)}
+    { title: "Proyek", done: resume.projects.some((item) => item.name.trim() || item.bullets.some((bullet) => bullet.text.trim())), view: <div className="editor-stack"><EntryHeader title="Proyek" action="Tambah proyek" onAdd={() => { const id = createId(); addWithMotion(id, (current) => ({ ...current, projects: [...current.projects, { id, name: "", technologies: "", date: "", bullets: [{ id: createId(), text: "" }] }] })); }} />
+    {resume.projects.map((item, index) => <div className={motionClass(item.id, "entry-card")} key={item.id}><div className="entry-card-head"><span>Proyek {index + 1}</span><IconButton label="Hapus proyek" onClick={() => removeWithMotion(item.id, (current) => ({ ...current, projects: current.projects.filter((entry) => entry.id !== item.id) }))} /></div><div className="field-grid"><Field label="Nama proyek" value={item.name} onChange={(value) => updateProject(resume, onChange, item.id, { name: value })} /><Field label="Teknologi" value={item.technologies} onChange={(value) => updateProject(resume, onChange, item.id, { technologies: value })} /><Field label="Tanggal proyek" value={item.date} onChange={(value) => updateProject(resume, onChange, item.id, { date: value })} /></div><div className="bullet-list">{item.bullets.map((bullet, bulletIndex) => <div className={motionClass(bullet.id, "bullet-editor")} key={bullet.id}><TextArea label={`Bullet proyek ${bulletIndex + 1}`} value={bullet.text} rows={3} onChange={(value) => updateProject(resume, onChange, item.id, { bullets: item.bullets.map((entry) => entry.id === bullet.id ? { ...entry, text: value } : entry) })} /><button type="button" className="text-button" onClick={() => onImprove(bullet.id)}>Perbaiki dengan AI</button><IconButton label="Hapus bullet proyek" onClick={() => removeWithMotion(bullet.id, (current) => ({ ...current, projects: current.projects.map((project) => project.id === item.id ? { ...project, bullets: project.bullets.filter((entry) => entry.id !== bullet.id) } : project) }))} /></div>)}</div><button type="button" className="secondary-button compact" onClick={() => { const id = createId(); addWithMotion(id, (current) => ({ ...current, projects: current.projects.map((project) => project.id === item.id ? { ...project, bullets: [...project.bullets, { id, text: "" }] } : project) })); }}><Plus size={16} /> Tambah bullet</button></div>)}
     </div> },
     { title: "Sertifikasi", done: resume.certifications.trim(), view: <TextArea label="Sertifikasi" value={resume.certifications} rows={5} onChange={(value) => onChange({ ...resume, certifications: value })} /> },
   ];

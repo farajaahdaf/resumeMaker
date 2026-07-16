@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, BriefcaseBusiness, Check, GraduationCap, Languages, ShieldCheck, UserRound } from "lucide-react";
 import { createId, type Resume } from "@/domain/resume";
+import { MotionPresence } from "@/components/motion-presence";
 
 type Answers = {
   language: "id" | "en";
@@ -54,7 +55,7 @@ export function OnboardingFlow({ onComplete }: { onComplete: (resume: Resume) =>
   };
 
   return <main className="onboarding-shell">
-    <header className="onboarding-header"><a className="brand onboarding-brand" href="#onboarding"><span className="brand-mark">RM</span><span>ResumeMaker</span></a>{step > 0 ? <div className="onboarding-progress-label"><span>{Math.min(step, totalQuestions)} / {totalQuestions}</span><strong>{progress}%</strong></div> : <div className="privacy-pill"><ShieldCheck size={15} />Local save</div>}</header>
+    <header className="onboarding-header"><a className="brand onboarding-brand" href="#onboarding"><span className="brand-mark">RM</span><span>ResumeMaker</span></a><div className="onboarding-status-slot"><MotionPresence show={step === 0} className="privacy-pill onboarding-status-motion" duration={180} contentKey={0}><ShieldCheck size={15} />Local save</MotionPresence><MotionPresence show={step > 0} className="onboarding-progress-label onboarding-status-motion" duration={180} contentKey={step}><span>{Math.min(step, totalQuestions)} / {totalQuestions}</span><strong>{progress}%</strong></MotionPresence></div></header>
     <div className="onboarding-progress" role="progressbar" aria-label="Progres onboarding" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
     <section className="onboarding-stage" id="onboarding">
       <div key={step} className={`question-card question-${direction}`}>

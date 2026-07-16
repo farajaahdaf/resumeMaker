@@ -1,12 +1,14 @@
+import type { Ref } from "react";
 import type { Resume } from "@/domain/resume";
 import { contactLine, dateRange, entryLine, resumeLabels } from "@/domain/resume-content";
 
 type Props = {
   resume: Resume;
   onChange?: (next: Resume) => void;
+  paperRef?: Ref<HTMLElement>;
 };
 
-export function ResumePreview({ resume, onChange }: Props) {
+export function ResumePreview({ resume, onChange, paperRef }: Props) {
   const text = resumeLabels[resume.language];
   const contacts = contactLine(resume);
   const editable = Boolean(onChange);
@@ -25,7 +27,7 @@ export function ResumePreview({ resume, onChange }: Props) {
   };
 
   return (
-    <article className={`resume-paper ${editable ? "editable-preview" : ""}`} aria-label="Pratinjau resume">
+    <article ref={paperRef} className={`resume-paper ${editable ? "editable-preview" : ""}`} aria-label="Pratinjau resume">
       <header className="resume-header">
         <h1 {...editText(resume.contact.fullName, (fullName) => onChange?.({ ...resume, contact: { ...resume.contact, fullName } }))}>{resume.contact.fullName || "Nama Lengkap"}</h1>
         {resume.targetRole ? <p className="target-role" {...editText(resume.targetRole, (targetRole) => onChange?.({ ...resume, targetRole }))}>{resume.targetRole}</p> : null}
