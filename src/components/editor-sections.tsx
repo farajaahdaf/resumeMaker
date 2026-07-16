@@ -3,6 +3,8 @@ import { ArrowLeft, ArrowRight, CheckCircle2, Plus, Trash2 } from "lucide-react"
 import type { Resume } from "@/domain/resume";
 import { createId } from "@/domain/resume";
 
+const LIST_MOTION_MS = 180;
+
 type Props = { resume: Resume; onChange: (next: Resume) => void; onImprove: (targetId: string) => void };
 
 export function ProfileEditor({ resume, onChange }: Pick<Props, "resume" | "onChange">) {
@@ -57,7 +59,7 @@ export function ContentEditor({ resume, onChange, onImprove }: Props) {
     motionTimers.current.set(key, window.setTimeout(() => {
       setEnteringIds((current) => { const next = new Set(current); next.delete(id); return next; });
       motionTimers.current.delete(key);
-    }, 240));
+    }, LIST_MOTION_MS));
   };
   const removeWithMotion = (id: string, update: (current: Resume) => Resume) => {
     if (leavingIds.has(id)) return;
@@ -71,7 +73,7 @@ export function ContentEditor({ resume, onChange, onImprove }: Props) {
       setLeavingIds((current) => { const next = new Set(current); next.delete(id); return next; });
       motionTimers.current.delete(key);
       pendingRemovalUpdates.current.delete(key);
-    }, 180));
+    }, LIST_MOTION_MS));
   };
   const motionClass = (id: string, base: string) => `${base} motion-list-item${enteringIds.has(id) ? " is-entering" : ""}${leavingIds.has(id) ? " is-leaving" : ""}`;
   const steps = [

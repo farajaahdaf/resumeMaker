@@ -17,6 +17,8 @@ const A4_WIDTH_PX = (210 / 25.4) * 96;
 const A4_HEIGHT_PX = (297 / 25.4) * 96;
 type Tab = "profile" | "content" | "tailor" | "quality";
 type AiMode = "match" | "clarity" | "shorten" | "detail";
+type EditorPhase = "open" | "closing" | "closed" | "opening";
+const PANEL_MOTION_MS = 200;
 
 export function ResumeBuilder() {
   const [resume, setResume] = useState<Resume>(sampleResume);
@@ -24,7 +26,9 @@ export function ResumeBuilder() {
   const [onboarded, setOnboarded] = useState(false);
   const [tab, setTab] = useState<Tab>("profile");
   const [mobileView, setMobileView] = useState<"editor" | "preview">("editor");
-  const [editorCollapsed, setEditorCollapsed] = useState(false);
+  const [editorPhase, setEditorPhase] = useState<EditorPhase>("open");
+  const editorMotionTimer = useRef<number | null>(null);
+  const editorMotionFrames = useRef<number[]>([]);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "failed">("saved");
   const [aiMode, setAiMode] = useState<AiMode>("match");
   const [jobDescription, setJobDescription] = useState("");
@@ -53,6 +57,11 @@ export function ResumeBuilder() {
     return () => window.clearTimeout(timeout);
   }, []);
 
+  useEffect(() => () => {
+    if (editorMotionTimer.current !== null) window.clearTimeout(editorMotionTimer.current);
+    editorMotionFrames.current.forEach((frame) => window.cancelAnimationFrame(frame));
+  }, []);
+
   useEffect(() => {
     if (!hydrated) return;
     const timeout = window.setTimeout(() => {
@@ -64,10 +73,45 @@ export function ResumeBuilder() {
 
   const updateResume = (next: Resume) => setResume({ ...next, updatedAt: new Date().toISOString() });
   const completeOnboarding = (next: Resume) => {
-    setResume(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    localStorage.setItem(ONBOARDING_KEY, "true");
-    setOnboarded(true);
+    const commit = () => {
+      setResume(next);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      localStorage.setItem(ONBOARDING_KEY, "true");
+      setOnboarded(true);
+    };
+
+    if (document.startViewTransition) document.startViewTransition(commit);
+    else commit();
+  };
+  const clearEditorMotion = () => {
+    if (editorMotionTimer.current !== null) window.clearTimeout(editorMotionTimer.current);
+    editorMotionTimer.current = null;
+    editorMotionFrames.current.forEach((frame) => window.cancelAnimationFrame(frame));
+    editorMotionFrames.current = [];
+  };
+  const closeEditor = () => {
+    clearEditorMotion();
+    setEditorPhase("closing");
+    editorMotionTimer.current = window.setTimeout(() => {
+      setEditorPhase("closed");
+      editorMotionTimer.current = null;
+    }, PANEL_MOTION_MS);
+  };
+  const openEditor = () => {
+    clearEditorMotion();
+    setEditorPhase("opening");
+    const firstFrame = window.requestAnimationFrame(() => {
+      const secondFrame = window.requestAnimationFrame(() => {
+        setEditorPhase("open");
+        editorMotionFrames.current = [];
+      });
+      editorMotionFrames.current.push(secondFrame);
+    });
+    editorMotionFrames.current.push(firstFrame);
+  };
+  const toggleEditor = () => {
+    if (editorPhase === "open" || editorPhase === "opening") closeEditor();
+    else openEditor();
   };
   const analyze = async () => {
     setAiState("loading"); setAiError("");
@@ -131,8 +175,8 @@ export function ResumeBuilder() {
       <a className="brand" href="#top" aria-label="ResumeMaker home"><span className="brand-mark">R</span><span>ResumeMaker</span></a>
       <div className="header-actions"><span className={`save-state ${saveState}`} aria-live="polite">{saveState === "saving" ? <LoaderCircle size={14} className="spin" /> : saveState === "saved" ? <Check size={14} /> : <AlertCircle size={14} />}{saveState === "saving" ? "Menyimpan" : saveState === "saved" ? "Tersimpan lokal" : "Gagal menyimpan"}</span><button className="icon-button" type="button" aria-label="Undo perubahan terakhir" disabled={!history.length} onClick={undo}><Undo2 size={18} /></button><button className="secondary-button ai-tools-button" type="button" onClick={() => setTab("tailor")}><Wand2 size={17} />AI Tools</button><button className="secondary-button" type="button" disabled={exportState !== "idle"} onClick={exportWord}>{exportState === "docx" ? <LoaderCircle className="spin" size={17} /> : <FileText size={17} />}Export DOCX</button><button className="primary-button" type="button" disabled={exportState !== "idle"} onClick={exportPdf}>{exportState === "pdf" ? <LoaderCircle className="spin" size={17} /> : <Printer size={17} />}Export PDF</button></div>
     </header>
-    <section className={`workspace ${editorCollapsed ? "editor-collapsed" : ""}`} id="top">
-      <aside className="rail no-print" aria-label="Tahapan editor"><div className="progress-card score-card"><div className="score-ring" style={{ "--score": `${completionScore}%` } as CSSProperties}><span>{completionScore}</span></div><div><span className="eyebrow">Kelengkapan profil</span><strong>{resume.title}</strong><small>{issues.length ? `${issues.length} hal perlu ditinjau` : "Siap diekspor"}</small></div></div><nav>{([['profile', 'Profil'], ['content', 'Konten'], ['tailor', 'AI Tools'], ['quality', 'Quality Check']] as [Tab, string][]).map(([id, label], index) => <button key={id} type="button" className={tab === id ? "active" : ""} aria-label={`Buka ${label}`} title={editorCollapsed ? label : undefined} onClick={() => { setTab(id); setEditorCollapsed(false); }}><span>{index + 1}</span><span className="rail-nav-label">{label}</span><ChevronRight size={16} /></button>)}</nav><div className="assistant-card"><Bot size={20} /><div><strong>{assistantHint.title}</strong><p>{assistantHint.body}</p><button type="button" onClick={() => setTab(assistantHint.tab)}>{assistantHint.action}<ChevronRight size={14} /></button></div></div></aside>
+    <section className={`workspace editor-${editorPhase}`} id="top">
+      <aside className="rail no-print" aria-label="Tahapan editor"><div className="progress-card score-card"><div className="score-ring" style={{ "--score": `${completionScore}%` } as CSSProperties}><span>{completionScore}</span></div><div><span className="eyebrow">Kelengkapan profil</span><strong>{resume.title}</strong><small>{issues.length ? `${issues.length} hal perlu ditinjau` : "Siap diekspor"}</small></div></div><nav>{([['profile', 'Profil'], ['content', 'Konten'], ['tailor', 'AI Tools'], ['quality', 'Quality Check']] as [Tab, string][]).map(([id, label], index) => <button key={id} type="button" className={tab === id ? "active" : ""} aria-label={`Buka ${label}`} title={editorPhase === "closed" ? label : undefined} onClick={() => { setTab(id); if (editorPhase === "closed" || editorPhase === "closing") openEditor(); }}><span>{index + 1}</span><span className="rail-nav-label">{label}</span><ChevronRight size={16} /></button>)}</nav><div className="assistant-card"><Bot size={20} /><div className="assistant-card-copy" key={`${assistantHint.title}:${assistantHint.action}`}><strong>{assistantHint.title}</strong><p>{assistantHint.body}</p><button type="button" onClick={() => setTab(assistantHint.tab)}>{assistantHint.action}<ChevronRight size={14} /></button></div></div></aside>
       <section id="resume-editor-panel" className={`editor-panel no-print ${mobileView === "preview" ? "mobile-hidden" : ""}`}>
         <div className="panel-heading"><div><span className="eyebrow">Langkah {tab === "profile" ? "1" : tab === "content" ? "2" : tab === "tailor" ? "3" : "4"}</span><h1>{tab === "profile" ? "Informasi utama" : tab === "content" ? "Susun pengalaman Anda" : tab === "tailor" ? "Sesuaikan dengan lowongan" : "Periksa sebelum ekspor"}</h1></div><label className="language-select">Bahasa resume<select value={resume.language} onChange={(event) => setResume({ ...resume, language: event.target.value as "id" | "en" })}><option value="id">Indonesia</option><option value="en">English</option></select></label></div>
         <MotionPresence show={Boolean(notice)} className="notice status-motion" role="status" ariaLive="polite" duration={180} contentKey={notice}>{notice}<button type="button" onClick={() => setNotice("")} aria-label="Tutup pemberitahuan">×</button></MotionPresence>
@@ -144,9 +188,9 @@ export function ResumeBuilder() {
       <section className={`preview-panel ${mobileView === "editor" ? "mobile-hidden" : ""}`}>
         <div className="preview-toolbar no-print">
           <div className="preview-toolbar-actions">
-            <button className="panel-collapse-button" type="button" aria-controls="resume-editor-panel" aria-expanded={!editorCollapsed} onClick={() => setEditorCollapsed((current) => !current)}>
-              {editorCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-              <span>{editorCollapsed ? "Buka editor" : "Perkecil panel"}</span>
+            <button className="panel-collapse-button" type="button" aria-controls="resume-editor-panel" aria-expanded={editorPhase === "open" || editorPhase === "opening"} onClick={toggleEditor}>
+              {editorPhase === "open" || editorPhase === "opening" ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+              <span>{editorPhase === "open" || editorPhase === "opening" ? "Perkecil panel" : "Buka editor"}</span>
             </button>
             <div className="preview-title"><PanelRight size={17} />Editable preview</div>
           </div>
@@ -227,17 +271,17 @@ function TailorPanel({ mode, setMode, jobDescription, setJobDescription, onAnaly
   const helper = mode === "match" ? "Tempel minimal 80 karakter." : "Contoh: fokus ke ringkasan dan bullet pengalaman.";
   const minLength = mode === "match" ? 80 : 10;
   const hasResults = Boolean((mode === "match" && keywordMatch) || result || recommendations.length);
-  const resultsKey = `${mode}:${result?.detectedLanguage ?? ""}:${keywordMatch?.score ?? ""}:${recommendations.map((item) => `${item.id}-${item.status}`).join("|")}`;
-  return <div className="editor-stack"><div className="ai-disclosure"><Sparkles size={20} /><div><strong>AI Tools</strong><p>Pilih mode, lihat saran, lalu terapkan langsung ke resume.</p></div></div><div className="ai-tool-grid">{tools.map((tool) => <button key={tool.id} type="button" className={mode === tool.id ? "active" : ""} onClick={() => setMode(tool.id)}><Wand2 size={17} /><strong>{tool.title}</strong><small>{tool.body}</small></button>)}</div><label className="field"><span>{inputLabel}</span><small>{helper}</small><textarea rows={mode === "match" ? 8 : 4} value={jobDescription} onChange={(event) => setJobDescription(event.target.value)} placeholder={mode === "match" ? "Tempel job description di sini..." : "Tulis instruksi singkat untuk AI..."} /></label><button className="primary-button wide" type="button" disabled={jobDescription.trim().length < minLength || state === "loading"} onClick={onAnalyze}>{state === "loading" ? <><LoaderCircle className="spin" size={17} />Menganalisis...</> : <><Gauge size={17} />Jalankan AI Tool</>}</button><MotionPresence show={Boolean(error)} className="error-message status-motion" role="alert" ariaLive="assertive" duration={180} contentKey={error}><AlertCircle size={18} />{error}</MotionPresence><MotionPresence show={hasResults} className="ai-results-motion" duration={240} contentKey={resultsKey}>{mode === "match" && keywordMatch ? <MatchScore match={keywordMatch} /> : null}{result ? <div className="keyword-block"><div className="section-row"><h3>{mode === "match" ? "Keyword lowongan" : "Fokus AI"}</h3><small>{result.detectedLanguage.toUpperCase()}</small></div><div className="chips">{result.keywords.map((keyword) => <span key={`${keyword.category}-${keyword.term}`} className={keyword.required ? "required" : ""}>{keyword.term}</span>)}</div></div> : null}{recommendations.length ? <div className="suggestion-toolbar"><strong>{safeCount} saran aman bisa diterapkan</strong><button className="secondary-button compact" type="button" disabled={!safeCount} onClick={onAcceptAll}><Download size={15} />Terapkan semua</button></div> : null}<div className="recommendation-list">{recommendations.map((item) => <RecommendationCard item={item} key={item.id} onAccept={onAccept} onReject={onReject} />)}</div></MotionPresence></div>;
+  const resultsKey = `${mode}:${result?.detectedLanguage ?? ""}:${keywordMatch?.score ?? ""}:${recommendations.map((item) => item.id).join("|")}`;
+  return <div className="editor-stack"><div className="ai-disclosure"><Sparkles size={20} /><div><strong>AI Tools</strong><p>Pilih mode, lihat saran, lalu terapkan langsung ke resume.</p></div></div><div className="ai-tool-grid">{tools.map((tool) => <button key={tool.id} type="button" className={mode === tool.id ? "active" : ""} onClick={() => setMode(tool.id)}><Wand2 size={17} /><strong>{tool.title}</strong><small>{tool.body}</small></button>)}</div><label className="field"><span>{inputLabel}</span><small>{helper}</small><textarea rows={mode === "match" ? 8 : 4} value={jobDescription} onChange={(event) => setJobDescription(event.target.value)} placeholder={mode === "match" ? "Tempel job description di sini..." : "Tulis instruksi singkat untuk AI..."} /></label><button className="primary-button wide" type="button" disabled={jobDescription.trim().length < minLength || state === "loading"} onClick={onAnalyze}>{state === "loading" ? <><LoaderCircle className="spin" size={17} />Menganalisis...</> : <><Gauge size={17} />Jalankan AI Tool</>}</button><MotionPresence show={Boolean(error)} className="error-message status-motion" role="alert" ariaLive="assertive" duration={180} contentKey={error}><AlertCircle size={18} />{error}</MotionPresence><MotionPresence show={hasResults} className="ai-results-motion" duration={240} contentKey={resultsKey}>{mode === "match" && keywordMatch ? <MatchScore match={keywordMatch} /> : null}{result ? <div className="keyword-block"><div className="section-row"><h3>{mode === "match" ? "Keyword lowongan" : "Fokus AI"}</h3><small>{result.detectedLanguage.toUpperCase()}</small></div><div className="chips">{result.keywords.map((keyword) => <span key={`${keyword.category}-${keyword.term}`} className={keyword.required ? "required" : ""}>{keyword.term}</span>)}</div></div> : null}{recommendations.length ? <div className="suggestion-toolbar"><strong>{safeCount} saran aman bisa diterapkan</strong><button className="secondary-button compact" type="button" disabled={!safeCount} onClick={onAcceptAll}><Download size={15} />Terapkan semua</button></div> : null}<div className="recommendation-list">{recommendations.map((item, index) => <RecommendationCard item={item} index={index} key={item.id} onAccept={onAccept} onReject={onReject} />)}</div></MotionPresence></div>;
 }
 
 function MatchScore({ match }: { match: KeywordMatch }) {
   return <section className="match-score" aria-label="Kecocokan keyword"><div className="match-score-number"><strong>{match.score}%</strong><span>Kecocokan keyword</span></div><div><p>{match.matched.length} cocok · {match.missing.length} belum ditemukan</p><small>Indikator relevansi isi, bukan probabilitas lolos ATS.</small></div></section>;
 }
 
-function RecommendationCard({ item, onAccept, onReject }: { item: AiRecommendation; onAccept: (item: AiRecommendation, edited?: string) => void; onReject: (item: AiRecommendation) => void }) {
+export function RecommendationCard({ item, index, onAccept, onReject }: { item: AiRecommendation; index: number; onAccept: (item: AiRecommendation, edited?: string) => void; onReject: (item: AiRecommendation) => void }) {
   const [edited, setEdited] = useState(item.proposedText); const done = item.status !== "pending";
-  return <article className={`recommendation-card ${done ? "resolved" : ""}`}><div className="recommendation-head"><span><Sparkles size={16} />Saran untuk {item.targetId}</span>{done ? <strong>{item.status}</strong> : null}</div><p className="reason">{item.reason}</p>{item.operation !== "none" ? <><div className="diff"><div><small>Sebelum</small><p>{item.originalText || "—"}</p></div><div><small>Sesudah</small><textarea aria-label="Edit teks saran" rows={4} value={edited} disabled={done} onChange={(event) => setEdited(event.target.value)} /></div></div>{item.relatedKeywords.length ? <p className="related">Keyword: {item.relatedKeywords.join(", ")}</p> : null}{item.unsupportedClaims.length ? <div className="warning-inline"><AlertCircle size={16} />Tidak dapat diterapkan: klaim baru {item.unsupportedClaims.join(", ")}</div> : null}<div className="card-actions"><button className="secondary-button" type="button" disabled={done} onClick={() => onReject(item)}>Tolak</button><button className="primary-button" type="button" disabled={done || !!item.unsupportedClaims.length} onClick={() => onAccept(item, edited === item.proposedText ? undefined : edited)}><Check size={16} />{edited === item.proposedText ? "Terima" : "Simpan edit"}</button></div></> : <div className="warning-inline"><AlertCircle size={16} />Bukti pada profil belum cukup untuk membuat perubahan.</div>}</article>;
+  return <article className={`recommendation-card ${done ? "resolved" : ""}`} style={{ "--recommendation-delay": `${Math.min(index * 40, 160)}ms` } as CSSProperties}><div className="recommendation-head"><span><Sparkles size={16} />Saran untuk {item.targetId}</span>{done ? <strong>{item.status}</strong> : null}</div><p className="reason">{item.reason}</p>{item.operation !== "none" ? <><div className="diff"><div><small>Sebelum</small><p>{item.originalText || "—"}</p></div><div><small>Sesudah</small><textarea aria-label="Edit teks saran" rows={4} value={edited} disabled={done} onChange={(event) => setEdited(event.target.value)} /></div></div>{item.relatedKeywords.length ? <p className="related">Keyword: {item.relatedKeywords.join(", ")}</p> : null}{item.unsupportedClaims.length ? <div className="warning-inline"><AlertCircle size={16} />Tidak dapat diterapkan: klaim baru {item.unsupportedClaims.join(", ")}</div> : null}<div className="card-actions"><button className="secondary-button" type="button" disabled={done} onClick={() => onReject(item)}>Tolak</button><button className="primary-button" type="button" disabled={done || !!item.unsupportedClaims.length} onClick={() => onAccept(item, edited === item.proposedText ? undefined : edited)}><Check size={16} />{edited === item.proposedText ? "Terima" : "Simpan edit"}</button></div></> : <div className="warning-inline"><AlertCircle size={16} />Bukti pada profil belum cukup untuk membuat perubahan.</div>}</article>;
 }
 
 function QualityPanel({ issues, resume, keywordMatch, exportState, onExportWord, onExportPdf }: { issues: ReturnType<typeof evaluateResume>; resume: Resume; keywordMatch: KeywordMatch | null; exportState: "idle" | "docx" | "pdf"; onExportWord: () => void; onExportPdf: () => void }) {
